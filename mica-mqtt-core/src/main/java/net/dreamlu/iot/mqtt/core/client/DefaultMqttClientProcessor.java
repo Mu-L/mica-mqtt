@@ -244,11 +244,18 @@ public class DefaultMqttClientProcessor implements IMqttClientProcessor {
 			if (result) {
 				pendingQos2Publish.onPubRelReceived();
 				clientStore.removePendingQos2Publish(messageId);
+				pubComp(context, messageId);
 			}
+		} else {
+			pubComp(context, messageId);
 		}
-		MqttFixedHeader fixedHeader = new MqttFixedHeader(MqttMessageType.PUBCOMP, false, MqttQoS.AT_MOST_ONCE, false, 0);
-		MqttMessageIdVariableHeader variableHeader = MqttMessageIdVariableHeader.from(messageId);
-		Tio.send(context, new MqttMessage(fixedHeader, variableHeader));
+	}
+
+	private static void pubComp(ChannelContext context, int messageId) {
+		MqttMessage message = MqttMessageFactory.newMessage(
+			new MqttFixedHeader(MqttMessageType.PUBCOMP, false, MqttQoS.AT_MOST_ONCE, false, 0),
+			MqttMessageIdVariableHeader.from(messageId), null);
+		Tio.send(context, message);
 	}
 
 	@Override

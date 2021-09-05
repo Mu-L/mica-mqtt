@@ -225,8 +225,14 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 			if (result) {
 				pendingQos2Publish.onPubRelReceived();
 				sessionManager.removePendingQos2Publish(clientId, messageId);
+				pubComp(context, messageId);
 			}
+		} else {
+			pubComp(context, messageId);
 		}
+	}
+
+	private static void pubComp(ChannelContext context, int messageId) {
 		MqttMessage message = MqttMessageFactory.newMessage(
 			new MqttFixedHeader(MqttMessageType.PUBCOMP, false, MqttQoS.AT_MOST_ONCE, false, 0),
 			MqttMessageIdVariableHeader.from(messageId), null);
