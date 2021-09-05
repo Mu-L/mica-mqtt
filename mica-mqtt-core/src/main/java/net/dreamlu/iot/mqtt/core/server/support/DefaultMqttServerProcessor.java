@@ -150,8 +150,8 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 				invokeListenerForPublish(clientId, mqttQoS, topicName, message, fixedHeader.isRetain());
 				break;
 			case AT_LEAST_ONCE:
-				invokeListenerForPublish(clientId, mqttQoS, topicName, message, fixedHeader.isRetain());
-				if (packetId != -1) {
+				boolean result = invokeListenerForPublish(clientId, mqttQoS, topicName, message, fixedHeader.isRetain());
+				if (packetId != -1 && result) {
 					MqttMessage messageAck = MqttMessageBuilders.pubAck()
 						.packetId(packetId)
 						.build();
@@ -221,9 +221,11 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 			MqttFixedHeader incomingFixedHeader = incomingPublish.fixedHeader();
 			MqttQoS mqttQoS = incomingFixedHeader.qosLevel();
 			boolean retain = incomingFixedHeader.isRetain();
-			invokeListenerForPublish(clientId, mqttQoS, topicName, incomingPublish, retain);
-			pendingQos2Publish.onPubRelReceived();
-			sessionManager.removePendingQos2Publish(clientId, messageId);
+			boolean result = invokeListenerForPublish(clientId, mqttQoS, topicName, incomingPublish, retain);
+			if (result) {
+				pendingQos2Publish.onPubRelReceived();
+				sessionManager.removePendingQos2Publish(clientId, messageId);
+			}
 		}
 		MqttMessage message = MqttMessageFactory.newMessage(
 			new MqttFixedHeader(MqttMessageType.PUBCOMP, false, MqttQoS.AT_MOST_ONCE, false, 0),
@@ -324,7 +326,7 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 	 * @param topicName topicName
 	 * @param message   MqttPublishMessage
 	 */
-	private void invokeListenerForPublish(String clientId, MqttQoS mqttQoS, String topicName,
+	private boolean invokeListenerForPublish(String clientId, MqttQoS mqttQoS, String topicName,
 										  MqttPublishMessage message, boolean isRetain) {
 		ByteBuffer payload = message.payload();
 		// 1. retain 消息逻辑
@@ -345,8 +347,10 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 		// 2. 消息发布
 		try {
 			messageListener.onMessage(clientId, topicName, mqttQoS, payload);
+			return true;
 		} catch (Throwable e) {
 			logger.error(e.getMessage(), e);
+			return false;
 		}
 	}
 

@@ -161,8 +161,8 @@ public class DefaultMqttClientProcessor implements IMqttClientProcessor {
 				invokeListenerForPublish(topicName, message);
 				break;
 			case AT_LEAST_ONCE:
-				invokeListenerForPublish(topicName, message);
-				if (packetId != -1) {
+				boolean result = invokeListenerForPublish(topicName, message);
+				if (packetId != -1 && result) {
 					MqttMessage messageAck = MqttMessageBuilders.pubAck()
 						.packetId(packetId)
 						.build();
@@ -240,9 +240,11 @@ public class DefaultMqttClientProcessor implements IMqttClientProcessor {
 		if (pendingQos2Publish != null) {
 			MqttPublishMessage incomingPublish = pendingQos2Publish.getIncomingPublish();
 			String topicName = incomingPublish.variableHeader().topicName();
-			this.invokeListenerForPublish(topicName, incomingPublish);
-			pendingQos2Publish.onPubRelReceived();
-			clientStore.removePendingQos2Publish(messageId);
+			boolean result = this.invokeListenerForPublish(topicName, incomingPublish);
+			if (result) {
+				pendingQos2Publish.onPubRelReceived();
+				clientStore.removePendingQos2Publish(messageId);
+			}
 		}
 		MqttFixedHeader fixedHeader = new MqttFixedHeader(MqttMessageType.PUBCOMP, false, MqttQoS.AT_MOST_ONCE, false, 0);
 		MqttMessageIdVariableHeader variableHeader = MqttMessageIdVariableHeader.from(messageId);
@@ -271,18 +273,20 @@ public class DefaultMqttClientProcessor implements IMqttClientProcessor {
 	 * @param topicName topicName
 	 * @param message   MqttPublishMessage
 	 */
-	private void invokeListenerForPublish(String topicName, MqttPublishMessage message) {
+	private boolean invokeListenerForPublish(String topicName, MqttPublishMessage message) {
 		List<MqttClientSubscription> subscriptionList = clientStore.getMatchedSubscription(topicName);
 		final ByteBuffer payload = message.payload();
-		subscriptionList.forEach(subscription -> {
+		for (MqttClientSubscription subscription : subscriptionList) {
 			IMqttClientMessageListener listener = subscription.getListener();
 			payload.rewind();
 			try {
 				listener.onMessage(topicName, payload);
 			} catch (Throwable e) {
 				logger.error(e.getMessage(), e);
+				return false;
 			}
-		});
+		}
+		return true;
 	}
 
 }
