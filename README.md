@@ -25,9 +25,18 @@
 - [x] 支持 GraalVM 编译成本机可执行程序。
 - [x] 支持 Spring boot 项目快速接入（mica-mqtt-spring-boot-starter）。
 - [x] mica-mqtt-spring-boot-starter 支持对接 Prometheus + Grafana。
+- [x] 基于 redis pub/sub 实现集群，详见 [mica-mqtt-broker 模块](mica-mqtt-broker)。
 
 ## 待办
 - [ ] 优化处理 mqtt session，以及支持 v5.0 
+
+
+## 默认端口
+
+| 端口号 | 协议            | 说明                             |
+| ------ | --------------- | -------------------------------- |
+| 1883   | tcp             | mqtt tcp 端口                    |
+| 8083   | http、websocket | http api 和 websocket mqtt 子协议端口 |
 
 ## 依赖
 ### Spring boot 项目
@@ -35,7 +44,7 @@
 <dependency>
   <groupId>net.dreamlu</groupId>
   <artifactId>mica-mqtt-spring-boot-starter</artifactId>
-  <version>1.1.0</version>
+  <version>1.1.2</version>
 </dependency>
 ```
 
@@ -46,7 +55,7 @@
 <dependency>
   <groupId>net.dreamlu</groupId>
   <artifactId>mica-mqtt-core</artifactId>
-  <version>1.1.0</version>
+  <version>1.1.2</version>
 </dependency>
 ```
 

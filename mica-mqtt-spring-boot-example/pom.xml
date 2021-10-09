@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <artifactId>mica-mqtt-spring-boot-example</artifactId>
-    <name>${artifactId}</name>
+    <name>${project.artifactId}</name>
     <url>https://www.dreamlu.net</url>
 
     <parent>
@@ -15,8 +15,7 @@
 
     <properties>
         <java.version>1.8</java.version>
-        <mica.version>2.5.4</mica.version>
-        <spring.boot.version>2.5.4</spring.boot.version>
+        <mica.version>2.5.5</mica.version>
     </properties>
 
     <dependencies>
@@ -71,11 +70,12 @@
     </dependencyManagement>
 
     <build>
-        <finalName>${project.name}</finalName>
+        <finalName>${project.artifactId}</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring.boot.version}</version>
             </plugin>
         </plugins>
     </build>

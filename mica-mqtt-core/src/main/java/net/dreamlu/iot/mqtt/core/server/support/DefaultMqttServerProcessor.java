@@ -77,14 +77,14 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 		String clientId = payload.clientIdentifier();
 		// 1. 客户端必须提供 clientId, 不管 cleanSession 是否为1, 此处没有参考标准协议实现
 		if (StrUtil.isBlank(clientId)) {
-			connAckByReturnCode(clientId, context, MqttConnectReturnCode.CONNECTION_REFUSED_IDENTIFIER_REJECTED);
+			connAckByReturnCode(clientId, context, MqttConnectReasonCode.CONNECTION_REFUSED_IDENTIFIER_REJECTED);
 			return;
 		}
 		// 2. 认证
 		String userName = payload.userName();
 		String password = payload.password();
 		if (!authHandler.authenticate(clientId, userName, password)) {
-			connAckByReturnCode(clientId, context, MqttConnectReturnCode.CONNECTION_REFUSED_BAD_USER_NAME_OR_PASSWORD);
+			connAckByReturnCode(clientId, context, MqttConnectReasonCode.CONNECTION_REFUSED_BAD_USER_NAME_OR_PASSWORD);
 			return;
 		}
 		// 3. 判断 clientId 是否在多个地方使用，如果在其他地方有使用，先解绑
@@ -115,6 +115,7 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 		boolean willFlag = variableHeader.isWillFlag();
 		if (willFlag) {
 			Message willMessage = new Message();
+			willMessage.setMessageType(MqttMessageType.PUBLISH.value());
 			willMessage.setTopic(payload.willTopic());
 			willMessage.setPayload(payload.willMessageInBytes());
 			willMessage.setQos(variableHeader.willQos());
@@ -122,12 +123,12 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 			messageStore.addWillMessage(clientId, willMessage);
 		}
 		// 8. 返回 ack
-		connAckByReturnCode(clientId, context, MqttConnectReturnCode.CONNECTION_ACCEPTED);
+		connAckByReturnCode(clientId, context, MqttConnectReasonCode.CONNECTION_ACCEPTED);
 		// 9. 在线状态
 		connectStatusListener.online(clientId);
 	}
 
-	private void connAckByReturnCode(String clientId, ChannelContext context, MqttConnectReturnCode returnCode) {
+	private void connAckByReturnCode(String clientId, ChannelContext context, MqttConnectReasonCode returnCode) {
 		MqttConnAckMessage message = MqttMessageBuilders.connAck()
 			.returnCode(returnCode)
 			.sessionPresent(false)
@@ -147,11 +148,11 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 		logger.debug("Publish - clientId:{} topicName:{} mqttQoS:{} packetId:{}", clientId, topicName, mqttQoS, packetId);
 		switch (mqttQoS) {
 			case AT_MOST_ONCE:
-				invokeListenerForPublish(clientId, mqttQoS, topicName, message, fixedHeader.isRetain());
+				invokeListenerForPublish(clientId, mqttQoS, topicName, message);
 				break;
 			case AT_LEAST_ONCE:
-				boolean result = invokeListenerForPublish(clientId, mqttQoS, topicName, message, fixedHeader.isRetain());
-				if (packetId != -1 && result) {
+				invokeListenerForPublish(clientId, mqttQoS, topicName, message);
+				if (packetId != -1) {
 					MqttMessage messageAck = MqttMessageBuilders.pubAck()
 						.packetId(packetId)
 						.build();
@@ -221,18 +222,10 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 			MqttFixedHeader incomingFixedHeader = incomingPublish.fixedHeader();
 			MqttQoS mqttQoS = incomingFixedHeader.qosLevel();
 			boolean retain = incomingFixedHeader.isRetain();
-			boolean result = invokeListenerForPublish(clientId, mqttQoS, topicName, incomingPublish, retain);
-			if (result) {
-				pendingQos2Publish.onPubRelReceived();
-				sessionManager.removePendingQos2Publish(clientId, messageId);
-				pubComp(context, messageId);
-			}
-		} else {
-			pubComp(context, messageId);
+			invokeListenerForPublish(clientId, mqttQoS, topicName, incomingPublish, retain);
+			pendingQos2Publish.onPubRelReceived();
+			sessionManager.removePendingQos2Publish(clientId, messageId);
 		}
-	}
-
-	private static void pubComp(ChannelContext context, int messageId) {
 		MqttMessage message = MqttMessageFactory.newMessage(
 			new MqttFixedHeader(MqttMessageType.PUBCOMP, false, MqttQoS.AT_MOST_ONCE, false, 0),
 			MqttMessageIdVariableHeader.from(messageId), null);
@@ -276,9 +269,9 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 			MqttQoS mqttQoS = subscription.qualityOfService();
 			mqttQosList.add(mqttQoS);
 			topicList.add(topicName);
-			sessionManager.addSubscribe(topicName, clientId, mqttQoS);
+			sessionManager.addSubscribe(topicName, clientId, mqttQoS.value());
 		}
-		logger.info("Subscribe - clientId:{} Topic:{} mqttQoS:{} messageId:{}", clientId, topicList, mqttQosList, messageId);
+		logger.info("Subscribe - clientId:{} TopicFilters:{} mqttQoS:{} messageId:{}", clientId, topicList, mqttQosList, messageId);
 		// 3. 返回 ack
 		MqttMessage subAckMessage = MqttMessageBuilders.subAck()
 			.addGrantedQosList(mqttQosList)
@@ -287,9 +280,11 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 		Tio.send(context, subAckMessage);
 		// 4. 发送保留消息
 		for (String topic : topicList) {
-			Message retainMessage = messageStore.getRetainMessage(topic);
-			if (retainMessage != null) {
-				messageDispatcher.send(clientId, retainMessage);
+			List<Message> retainMessageList = messageStore.getRetainMessage(topic);
+			if (retainMessageList != null && !retainMessageList.isEmpty()) {
+				for (Message retainMessage : retainMessageList) {
+					messageDispatcher.send(clientId, retainMessage);
+				}
 			}
 		}
 	}
@@ -332,8 +327,9 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 	 * @param topicName topicName
 	 * @param message   MqttPublishMessage
 	 */
-	private boolean invokeListenerForPublish(String clientId, MqttQoS mqttQoS, String topicName,
-										  MqttPublishMessage message, boolean isRetain) {
+	private void invokeListenerForPublish(String clientId, MqttQoS mqttQoS, String topicName, MqttPublishMessage message) {
+		MqttFixedHeader fixedHeader = message.fixedHeader();
+		boolean isRetain = fixedHeader.isRetain();
 		ByteBuffer payload = message.payload();
 		// 1. retain 消息逻辑
 		if (isRetain) {
@@ -347,16 +343,17 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 				retainMessage.setPayload(payload.array());
 				retainMessage.setClientId(clientId);
 				retainMessage.setMessageType(MqttMessageType.PUBLISH.value());
+				retainMessage.setRetain(true);
+				retainMessage.setDup(fixedHeader.isDup());
+				retainMessage.setTimestamp(System.currentTimeMillis());
 				this.messageStore.addRetainMessage(topicName, retainMessage);
 			}
 		}
 		// 2. 消息发布
 		try {
-			messageListener.onMessage(clientId, topicName, mqttQoS, payload);
-			return true;
+			messageListener.onMessage(clientId, message);
 		} catch (Throwable e) {
 			logger.error(e.getMessage(), e);
-			return false;
 		}
 	}
 
