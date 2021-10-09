@@ -50,7 +50,7 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 	/**
 	 * 2 倍客户端 keepAlive 时间
 	 */
-	private static final long KEEP_ALIVE_UNIT = 2000L;
+	private static final long KEEP_ALIVE_UNIT = 2_000L;
 	private final long heartbeatTimeout;
 	private final IMqttMessageStore messageStore;
 	private final IMqttSessionManager sessionManager;
@@ -151,8 +151,8 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 				invokeListenerForPublish(clientId, mqttQoS, topicName, message);
 				break;
 			case AT_LEAST_ONCE:
-				invokeListenerForPublish(clientId, mqttQoS, topicName, message);
-				if (packetId != -1) {
+				boolean result = invokeListenerForPublish(clientId, mqttQoS, topicName, message);
+				if (packetId != -1 && result) {
 					MqttMessage messageAck = MqttMessageBuilders.pubAck()
 						.packetId(packetId)
 						.build();
@@ -221,11 +221,18 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 			String topicName = incomingPublish.variableHeader().topicName();
 			MqttFixedHeader incomingFixedHeader = incomingPublish.fixedHeader();
 			MqttQoS mqttQoS = incomingFixedHeader.qosLevel();
-			boolean retain = incomingFixedHeader.isRetain();
-			invokeListenerForPublish(clientId, mqttQoS, topicName, incomingPublish, retain);
-			pendingQos2Publish.onPubRelReceived();
-			sessionManager.removePendingQos2Publish(clientId, messageId);
+			boolean result = invokeListenerForPublish(clientId, mqttQoS, topicName, incomingPublish);
+			if (result) {
+				pendingQos2Publish.onPubRelReceived();
+				sessionManager.removePendingQos2Publish(clientId, messageId);
+				pubComp(context, messageId);
+			}
+		} else {
+			pubComp(context, messageId);
 		}
+	}
+
+	private static void pubComp(ChannelContext context, int messageId) {
 		MqttMessage message = MqttMessageFactory.newMessage(
 			new MqttFixedHeader(MqttMessageType.PUBCOMP, false, MqttQoS.AT_MOST_ONCE, false, 0),
 			MqttMessageIdVariableHeader.from(messageId), null);
@@ -327,7 +334,7 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 	 * @param topicName topicName
 	 * @param message   MqttPublishMessage
 	 */
-	private void invokeListenerForPublish(String clientId, MqttQoS mqttQoS, String topicName, MqttPublishMessage message) {
+	private boolean invokeListenerForPublish(String clientId, MqttQoS mqttQoS, String topicName, MqttPublishMessage message) {
 		MqttFixedHeader fixedHeader = message.fixedHeader();
 		boolean isRetain = fixedHeader.isRetain();
 		ByteBuffer payload = message.payload();
@@ -352,8 +359,10 @@ public class DefaultMqttServerProcessor implements MqttServerProcessor {
 		// 2. 消息发布
 		try {
 			messageListener.onMessage(clientId, message);
+			return true;
 		} catch (Throwable e) {
 			logger.error(e.getMessage(), e);
+			return false;
 		}
 	}
 
